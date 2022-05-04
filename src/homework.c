@@ -1,12 +1,13 @@
 # include "tsunami.h"
 
 
-double interpolate(double *phi, double *U, int *map, int n)
-{
+double interpolate(double *phi, double *U, int *map, int n){
+
     double u = 0.0; int i;
     for (i=0; i <n; i++)
         u += phi[i]*U[map[i]];
     return u;
+    
 }
 
 
