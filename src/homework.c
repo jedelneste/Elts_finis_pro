@@ -14,10 +14,6 @@ void stereoCoordonnee(const char *meshFileName, double* X, double* Y, int nNode)
 
     FILE* file = fopen(meshFileName,"r");
 
-
-    for (int i=0; i<nNode, i++){
-
-    }
 }
 
 
