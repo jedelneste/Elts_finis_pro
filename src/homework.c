@@ -1,5 +1,9 @@
 # include "tsunami.h"
 
+typedef struct{
+    int elem[2];
+    int node[2];
+} femEdge; 
 
 double interpolate(double *phi, double *U, int *map, int n){
 
@@ -20,14 +24,14 @@ void stereoCoordonnee(double* X, double* Y, double* x, double* y, double* z, int
 
 }
 
-void femShallowTriangleMap(int index, int map[3])
+void tsunamiTriangleMap(int index, int map[3])
 {
     int j;
     for (j=0; j < 3; ++j) 
         map[j] = index*3 + j; 
 }
 
-void femShallowEdgeMap(int index, int map[2][2], femEdge edges, int nElem, int* elem)
+void tsunamiEdgeMap(int index, int map[2][2], femEdge edges, int nElem, int* elem)
 {
     int i,j,k;   
     for (j=0; j < 2; ++j) {
@@ -55,18 +59,50 @@ void phiCreate2(double xsi, double *phi)
     
 }
 
-void femShallowAddIntegralsElements(int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV){
+void InverseMatrix(double* BE, double* BU, double* BV, int* elem, int nElem, double* X, double* Y)
+{
+         
+    double invA[3][3] = {{18.0,-6.0,-6.0},{-6.0,18.0,-6.0},{-6.0,-6.0,18.0}};
+    double BEloc[3],BUloc[3],BVloc[3];
+ 
+    double xLoc[3],yLoc[3],jac;
+    int    ielem,i,j,mapElem[3];
+    
+    for (ielem=0; ielem < nElem; ielem++) {
+        tsunamiTriangleMap(ielem,mapElem);
+        int *mapCoord = &(elem[ielem*3]);
+        for (j=0; j < 3; ++j) {
+        	  xLoc[j] = X[mapCoord[j]];
+        	  yLoc[j] = Y[mapCoord[j]]; }
+        jac = (xLoc[1] - xLoc[0]) * (yLoc[2] - yLoc[0]) - (yLoc[1] - yLoc[0]) * (xLoc[2] - xLoc[0]);
+        for (i=0; i < 3; i++) {
+            BEloc[i] = BE[mapElem[i]];
+            BUloc[i] = BU[mapElem[i]];
+            BVloc[i] = BV[mapElem[i]];
+            BE[mapElem[i]] = 0.0; 
+            BU[mapElem[i]] = 0.0; 
+            BV[mapElem[i]] = 0.0; }
+        for (i=0; i < 3; i++) { 
+            for (j=0; j < 3; j++) {
+                BE[mapElem[i]] += invA[i][j] * BEloc[j] / jac; 
+                BU[mapElem[i]] += invA[i][j] * BUloc[j] / jac; 
+                BV[mapElem[i]] += invA[i][j] * BVloc[j] / jac; }}}
+
+}
+
+void tsunamiAddIntegralsElements(int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV, double* bath){
 
     int iElem, i, j, k, mapElem[3];
-    double xsi,eta,weight,jac,xLoc[3],yLoc[3],phi[3],dphidx[3],dphidy[3];
+    double xsi,eta,weight,jac,xLoc[3],yLoc[3],zLoc[3],phi[3],dphidx[3],dphidy[3];
     double y,u,v,e;
 
     for (iElem=0; iElem<nElem; iElem++){
-        femShallowTriangleMap(iElem, mapElem);
+        tsunamiTriangleMap(iElem, mapElem);
         int *mapCoord = &(elem[iElem*3]);
         for(j=0; j<3; j++){
             xLoc[j] = X[mapCoord[j]];
             yLoc[j] = Y[mapCoord[j]];
+            zLoc[j] = bath[mapCoord[j]];
         }
         jac = (xLoc[1] - xLoc[0]) * (yLoc[2] - yLoc[0]) - (yLoc[1] - yLoc[0]) * (xLoc[2] - xLoc[0]);
         dphidx[0] = (yLoc[1] - yLoc[2])/jac;
@@ -84,39 +120,31 @@ void femShallowAddIntegralsElements(int nElem, int* elem, double* X, double* Y, 
             e = interpolate(phi, E, mapElem, 3);
             u = interpolate(phi, U, mapElem, 3); //Est-ce qu'on a déjà U et V ?
             v = interpolate(phi, V, mapElem, 3);
-            double coriolis; //Je vois pas trop comment calculer ces termes
-            double tau; //pareil
-            double h; //Bathymétrie ??
-            double toAdd = (4*R*R+xLoc[k]*xLoc[k]+yLoc[k]*yLoc[k])/(4*R*R); //A vérifier avec xLoc[k]?
+            double theta;
+            double coriolis = 2*Omega*sin(theta); //Je vois pas trop comment calculer ces termes
+            double h = zLoc[k];
+            double toAdd = (4*R*R+xLoc[k]*xLoc[k]+yLoc[k]*yLoc[k])/(4*R*R); 
             for(i=0; i<3; i++){
-                BE[mapElem[i]] += ( h*u*dphidx[i] + h*v*dphidy[i] )*jac*weight; //Il faut encore ajouter les termes du tsunami
-                BU[mapElem[i]] += ((coriolis*v + tau - Gamma*u)*phi[i] + g*e*dphidx[i])*jac*weight; // Pour l'instant copier coller du devoir 9
-                BV[mapElem[i]] += ((- coriolis*u - Gamma*v)*phi[i] + g*e*dphidy[i])*jac*weight;}}} //Idem
-            }
-
-
-        }
-
-    }
-            
+                BE[mapElem[i]] += ( h*u*dphidx[i] + h*v*dphidy[i] )*toAdd*jac*weight + phi[i]*((h*xLoc[k]+v*yLoc[k])/R*R)*jac*weight; 
+                BU[mapElem[i]] += ((coriolis*v - Gamma*u)*phi[i] + g*e*dphidx[i]*toAdd)*jac*weight + (phi[i]*((g*xLoc[k]*e)/2*R*R))*jac*weight; 
+                BV[mapElem[i]] += ((- coriolis*u - Gamma*v)*phi[i] + g*e*dphidy[i]*toAdd)*jac*weight + (phi[i]*((g*yLoc[k]*e)/2*R*R))*jac*weight;}}}         
 }
 
-void femShallowAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV){
+void tsunamiAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV){
 
     int iEdge, mapEdge[2][2], j, k;
     double xEdge[2], yEdge[2], phiEdge[2];
     double xsi,weight,jac;
 
     for(iEdge=0; iEdge<nEdges; iEdge++){
-        femShallowEdgeMap(iEdge, mapEdge, edges, nElem, elem);
+        tsunamiEdgeMap(iEdge, mapEdge, edges, nElem, elem);
         for (j=0; j<2; j++){
             int node = edges[iEdge].node[j];
             xEdge[j] = X[node];
             yEdge[j] = Y[node];
         }
 
-        //On trouve où sizeGlo ??
-        int boundary = (mapEdge[1][0] == sizeGlo-1);
+        int boundary = (mapEdge[1][0] == nElem*3);
 
         double dxdxsi = (xEdge[1] - xEdge[0]);
         double dydxsi = (yEdge[1] - yEdge[0]);
@@ -140,20 +168,15 @@ void femShallowAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* ele
             unR = boundary ? -unL : uR*nx + vR*ny;
             qe =  0.5*h*   ( (unL+unR) + sqrt(g/h)*( eL-eR ) );
             qu =  0.5*g*nx*( ( eL+eR ) + sqrt(h/g)*(unL-unR) );
-            qv =  0.5*g*ny*( ( eL+eR ) + sqrt(h/g)*(unL-unR) );        
+            qv =  0.5*g*ny*( ( eL+eR ) + sqrt(h/g)*(unL-unR) );    
+            double toAdd = (4*R*R+xLoc[k]*xLoc[k]+yLoc[k]*yLoc[k])/(4*R*R);    
             for (i=0; i < 2; i++) {
-                //Termes à rajouter ?
-                BE[mapEdge[0][i]] -= qe*phiEdge[i]*jac*weight; 
-                BU[mapEdge[0][i]] -= qu*phiEdge[i]*jac*weight; 
-                BV[mapEdge[0][i]] -= qv*phiEdge[i]*jac*weight; 
-                BE[mapEdge[1][i]] += qe*phiEdge[i]*jac*weight;
-                BU[mapEdge[1][i]] += qu*phiEdge[i]*jac*weight;
-                BV[mapEdge[1][i]] += qv*phiEdge[i]*jac*weight; }}}
-
-        }
-
-    }
-
+                BE[mapEdge[0][i]] -= qe*phiEdge[i]*toAdd*jac*weight; 
+                BU[mapEdge[0][i]] -= qu*phiEdge[i]*toAdd*jac*weight; 
+                BV[mapEdge[0][i]] -= qv*phiEdge[i]*toAdd*jac*weight; 
+                BE[mapEdge[1][i]] += qe*phiEdge[i]*toAdd*jac*weight;
+                BU[mapEdge[1][i]] += qu*phiEdge[i]*toAdd*jac*weight;
+                BV[mapEdge[1][i]] += qv*phiEdge[i]*toAdd*jac*weight; }}}
 }
 
 
@@ -188,21 +211,20 @@ void tsunamiCompute(double dt, int nmax, int sub, const char *meshFileName, cons
     for (i = 0; i < nElem; i++) 
         fscanf(file,"%d : %d %d %d \n",&trash,&elem[i*3],&elem[i*3+1],&elem[i*3+2]);   
     fscanf(file, "Number of edges %d \n", &nEdges);
-    femEdge *edges = malloc(sizeof(femEdge)*nEdges);
+    femEdge *edges = malloc(sizeof(edge)*nEdges);
     for (i = 0; i<nEdges; i++){
         fscanf(file, "%d : %d %d : %d %d \n", &trash, &(edges[i].node[0]), &(edges[i].node[1]), &(edges[i].elem[0]), &(edges[i].elem[1]));
         fprintf(stdout, "%d %d \n", &(edges[i].node[0]), &(edges[i].node[1]));
     }
     double *X = malloc(sizeof(double)*nNode);
     double *Y = malloc(sizeof(double)*nNode);
-    stereoCoordonnee(X, Y, x, y, bath);
-
+    stereoCoordonnee(X, Y, x, y, bath, nNode);
 
     fclose(file); 
 
-
-    
     double *E  = malloc(sizeof(double)*nElem*3);
+    double *U = malloc(sizeof(double)*nElem*3);
+    double *V = malloc(sizeof(double)*nElem*3);
     for (i = 0; i < nElem; i++)
         for (j = 0; j < 3; j++)
             E[i*3+j] = bath[elem[i*3+j]]/(10*BathMax);
@@ -215,7 +237,6 @@ void tsunamiCompute(double dt, int nmax, int sub, const char *meshFileName, cons
     free(bath);
     free(E);
     free(elem);
- 
 }
 
 

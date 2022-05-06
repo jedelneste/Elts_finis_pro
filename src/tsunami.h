@@ -9,10 +9,6 @@
 
 # define PI 3.14159265358979323846
 
-typedef struct {
-    int elem[2];
-    int node[2];
-} femEdge;
 
 
 static const double R = 6371220.;
