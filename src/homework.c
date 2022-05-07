@@ -31,18 +31,18 @@ void tsunamiTriangleMap(int index, int map[3])
         map[j] = index*3 + j; 
 }
 
-void tsunamiEdgeMap(int index, int map[2][2], femEdge edges, int nElem, int* elem)
+void tsunamiEdgeMap(int index, int map[2][2], femEdge *edges, int nElem, int* elem)
 {
     int i,j,k;   
     for (j=0; j < 2; ++j) {
         int node = edges[index].node[j];
         for (k=0; k < 2; k++) {
-            int elem = edges[index].elem[k];
+            int e = edges[index].elem[k];
             map[k][j] = (nElem)*3;
-            if (elem >= 0) {
+            if (e >= 0) {
                 for (i=0; i < 3; i++) {
-                    if (elem[elem*3 + i] == node) {
-                        map[k][j] = elem*3 + i;  }}}}}
+                    if (elem[e*3 + i] == node) {
+                        map[k][j] = e*3 + i;  }}}}}
 }
 
 void phiCreate1(double xsi, double eta, double *phi)
@@ -57,6 +57,20 @@ void phiCreate2(double xsi, double *phi)
     phi[0] = (1.0 - xsi)/2.0;
     phi[1] = (1.0 + xsi)/2.0;   
     
+}
+
+int femEdgesCompare(const void *edgeOne, const void *edgeTwo)
+{
+    int *nodeOne = ((femEdge*) edgeOne)->node;
+    int *nodeTwo = ((femEdge*) edgeTwo)->node;  
+    int  diffMin = fmin(nodeOne[0],nodeOne[1]) - fmin(nodeTwo[0],nodeTwo[1]);
+    int  diffMax = fmax(nodeOne[0],nodeOne[1]) - fmax(nodeTwo[0],nodeTwo[1]);
+    
+    if (diffMin < 0)    return  1;
+    if (diffMin > 0)    return -1;
+    if (diffMax < 0)    return  1;
+    if (diffMax > 0)    return -1; 
+                        return  0;
 }
 
 void InverseMatrix(double* BE, double* BU, double* BV, int* elem, int nElem, double* X, double* Y)
@@ -90,11 +104,11 @@ void InverseMatrix(double* BE, double* BU, double* BV, int* elem, int nElem, dou
 
 }
 
-void tsunamiAddIntegralsElements(int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV, double* bath){
+void tsunamiAddIntegralsElements(int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV){
 
     int iElem, i, j, k, mapElem[3];
-    double xsi,eta,weight,jac,xLoc[3],yLoc[3],zLoc[3],phi[3],dphidx[3],dphidy[3];
-    double y,u,v,e;
+    double weight,jac,xLoc[3],yLoc[3],phi[3],dphidx[3],dphidy[3];
+    double x,y,u,v,e;
 
     for (iElem=0; iElem<nElem; iElem++){
         tsunamiTriangleMap(iElem, mapElem);
@@ -102,39 +116,36 @@ void tsunamiAddIntegralsElements(int nElem, int* elem, double* X, double* Y, dou
         for(j=0; j<3; j++){
             xLoc[j] = X[mapCoord[j]];
             yLoc[j] = Y[mapCoord[j]];
-            zLoc[j] = bath[mapCoord[j]];
         }
         jac = (xLoc[1] - xLoc[0]) * (yLoc[2] - yLoc[0]) - (yLoc[1] - yLoc[0]) * (xLoc[2] - xLoc[0]);
-        dphidx[0] = (yLoc[1] - yLoc[2])/jac;
-        dphidx[1] = (yLoc[2] - yLoc[0])/jac;
-        dphidx[2] = (yLoc[0] - yLoc[1])/jac;
-        dphidy[0] = (xLoc[2] - xLoc[1])/jac;
-        dphidy[1] = (xLoc[0] - xLoc[2])/jac;
-        dphidy[2] = (xLoc[1] - xLoc[0])/jac;
+        for(i=0; i<3; i++){
+            dphidx[i] = (yLoc[(i+1)%3] - yLoc[(i+2)%3])/jac;
+            dphidy[i] = (xLoc[(i+1)%3] - xLoc[(i+2)%3])/jac;
+        }
         for (k=0; k<3; k++){
-            xsi = gaussTriangleXsi[k];
-            eta = gaussTriangleEta[k];
             weight = gaussTriangleWeight[k];
-            phiCreate1(xsi, eta, phi);
+            phiCreate1(gaussTriangleXsi[k], gaussTriangleEta[k], phi);
+            x = interpolate(phi, X, mapCoord, 3);
             y = interpolate(phi, Y, mapCoord, 3);
             e = interpolate(phi, E, mapElem, 3);
-            u = interpolate(phi, U, mapElem, 3); //Est-ce qu'on a déjà U et V ?
+            u = interpolate(phi, U, mapElem, 3); 
             v = interpolate(phi, V, mapElem, 3);
-            double theta;
-            double coriolis = 2*Omega*sin(theta); //Je vois pas trop comment calculer ces termes
-            double h = zLoc[k];
-            double toAdd = (4*R*R+xLoc[k]*xLoc[k]+yLoc[k]*yLoc[k])/(4*R*R); 
+            double z3d = R*(4*R*R - x*x - y*y) / (4*R*R + x*x + y*y);
+            double theta = asin(z3d/R)*180/PI;
+            double coriolis = 2*Omega*sin(theta); 
+            double h = R*(4*R*R - x*x - y*y) / (4*R*R + x*x + y*y);
+            double toAdd = (4*R*R+x*x+y*y)/(4*R*R);
             for(i=0; i<3; i++){
-                BE[mapElem[i]] += ( h*u*dphidx[i] + h*v*dphidy[i] )*toAdd*jac*weight + phi[i]*((h*xLoc[k]+v*yLoc[k])/R*R)*jac*weight; 
-                BU[mapElem[i]] += ((coriolis*v - Gamma*u)*phi[i] + g*e*dphidx[i]*toAdd)*jac*weight + (phi[i]*((g*xLoc[k]*e)/2*R*R))*jac*weight; 
-                BV[mapElem[i]] += ((- coriolis*u - Gamma*v)*phi[i] + g*e*dphidy[i]*toAdd)*jac*weight + (phi[i]*((g*yLoc[k]*e)/2*R*R))*jac*weight;}}}         
+                BE[mapElem[i]] += ( h*u*dphidx[i] + h*v*dphidy[i] )*toAdd*jac*weight + phi[i]*((h*(x*u+v*y))/R*R)*jac*weight; 
+                BU[mapElem[i]] += ((coriolis*v - Gamma*u)*phi[i] + g*e*dphidx[i]*toAdd)*jac*weight + (phi[i]*((g*x*e)/2*R*R))*jac*weight; 
+                BV[mapElem[i]] += ((- coriolis*u - Gamma*v)*phi[i] + g*e*dphidy[i]*toAdd)*jac*weight + (phi[i]*((g*y*e)/2*R*R))*jac*weight;}}}         
 }
 
 void tsunamiAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* elem, double* X, double* Y, double* E, double* U, double* V, double* BE, double* BU, double* BV){
 
     int iEdge, mapEdge[2][2], j, k;
     double xEdge[2], yEdge[2], phiEdge[2];
-    double xsi,weight,jac;
+    double xsi,weight,jac, eL, eR, uL, uR, vL, vR, unL, unR, qe, qu, qv;
 
     for(iEdge=0; iEdge<nEdges; iEdge++){
         tsunamiEdgeMap(iEdge, mapEdge, edges, nElem, elem);
@@ -158,6 +169,7 @@ void tsunamiAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* elem, 
             phiCreate2(xsi, phiEdge);
                         
             //A vérifier
+            double h = R*(4*R*R - xEdge[k]*xEdge[k] - yEdge[k]*yEdge[k]) / (4*R*R + xEdge[k]*xEdge[k] + yEdge[k]*yEdge[k]);
             eL = interpolate(phiEdge,E,mapEdge[0],2);
             eR = boundary ? eL : interpolate(phiEdge,E,mapEdge[1],2);
             uL = interpolate(phiEdge,U,mapEdge[0],2);
@@ -169,8 +181,8 @@ void tsunamiAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* elem, 
             qe =  0.5*h*   ( (unL+unR) + sqrt(g/h)*( eL-eR ) );
             qu =  0.5*g*nx*( ( eL+eR ) + sqrt(h/g)*(unL-unR) );
             qv =  0.5*g*ny*( ( eL+eR ) + sqrt(h/g)*(unL-unR) );    
-            double toAdd = (4*R*R+xLoc[k]*xLoc[k]+yLoc[k]*yLoc[k])/(4*R*R);    
-            for (i=0; i < 2; i++) {
+            double toAdd = (4*R*R+xEdge[k]*xEdge[k]+yEdge[k]*yEdge[k])/(4*R*R);    
+            for (int i=0; i < 2; i++) {
                 BE[mapEdge[0][i]] -= qe*phiEdge[i]*toAdd*jac*weight; 
                 BU[mapEdge[0][i]] -= qu*phiEdge[i]*toAdd*jac*weight; 
                 BV[mapEdge[0][i]] -= qv*phiEdge[i]*toAdd*jac*weight; 
@@ -179,8 +191,18 @@ void tsunamiAddIntegralsEdges(int nEdges, femEdge* edges, int nElem, int* elem, 
                 BV[mapEdge[1][i]] += qv*phiEdge[i]*toAdd*jac*weight; }}}
 }
 
-
-
+void initialCondition(double *U, double *V, int nElem, int *elem, double *X, double *Y){
+    int e,j,*node;
+    for(int e=0; e<nElem; e++){
+        node = &(elem[e*3]);
+        for(int j=0; j<3; j++){
+            double x = X[node[j]];
+            double y = Y[node[j]];
+            U[e*3+j] = tsunamiInitialConditionOkada(x,y);
+            V[e*3+j] = tsunamiInitialConditionOkada(x,y);
+        }
+    }
+}
 
 void tsunamiCompute(double dt, int nmax, int sub, const char *meshFileName, const char *baseResultName)
 { 
@@ -211,32 +233,96 @@ void tsunamiCompute(double dt, int nmax, int sub, const char *meshFileName, cons
     for (i = 0; i < nElem; i++) 
         fscanf(file,"%d : %d %d %d \n",&trash,&elem[i*3],&elem[i*3+1],&elem[i*3+2]);   
     fscanf(file, "Number of edges %d \n", &nEdges);
-    femEdge *edges = malloc(sizeof(edge)*nEdges);
+    femEdge *edges = malloc(sizeof(femEdge)*nEdges);
     for (i = 0; i<nEdges; i++){
         fscanf(file, "%d : %d %d : %d %d \n", &trash, &(edges[i].node[0]), &(edges[i].node[1]), &(edges[i].elem[0]), &(edges[i].elem[1]));
-        fprintf(stdout, "%d %d \n", &(edges[i].node[0]), &(edges[i].node[1]));
+        //fprintf(stdout, "%d %d \n", (edges[i].node[0]), (edges[i].node[1]));
+    }
+    qsort(edges, nEdges, sizeof(femEdge), femEdgesCompare);
+    int index = 0;          
+    int nBoundary = 0;
+    
+    for (i=0; i < nEdges; i++) {
+      if (i == nEdges - 1 || femEdgesCompare(&edges[i],&edges[i+1]) != 0) {
+              edges[index] = edges[i];
+              nBoundary++; }
+      else {  edges[index] = edges[i];
+              edges[index].elem[1] = edges[i+1].elem[0];
+              i = i+1;}
+      index++; 
     }
     double *X = malloc(sizeof(double)*nNode);
     double *Y = malloc(sizeof(double)*nNode);
-    stereoCoordonnee(X, Y, x, y, bath, nNode);
+    stereoCoordonnee(X,Y,x,y,bath,nNode);
 
     fclose(file); 
 
-    double *E  = malloc(sizeof(double)*nElem*3);
+    //Création des éléments qu'on a besoin 
+    double *E  = malloc(sizeof(double)*nElem*3); //peut être mettre +1
     double *U = malloc(sizeof(double)*nElem*3);
     double *V = malloc(sizeof(double)*nElem*3);
-    for (i = 0; i < nElem; i++)
-        for (j = 0; j < 3; j++)
-            E[i*3+j] = bath[elem[i*3+j]]/(10*BathMax);
+    double *BE  = malloc(sizeof(double)*nElem*3);
+    double *BU = malloc(sizeof(double)*nElem*3);
+    double *BV = malloc(sizeof(double)*nElem*3);
+    for (i =0; i< nElem*3; i++){
+        E[i] = bath[elem[i]]/(10*BathMax);
+        U[i] = 0.0;
+        V[i] = 0.0;
+        BE[i] = 0.0;
+        BU[i] = 0.0;
+        BV[i] = 0.0;
+    }
 
+    // On applique les conditions initiales
+    initialCondition(U,V,nElem, elem,X,Y);
+    tsunamiAddIntegralsElements(nElem, elem, X,Y,E,U,V,BE,BU,BV);
+    tsunamiAddIntegralsEdges(nEdges,edges,nElem,elem,X,Y,E,U,V,BE,BU,BV);
+    InverseMatrix(BE,BU,BV,elem,nElem,X,Y);
+    for (i=0; i < nElem*3; i++) {
+        E[i] += dt * BE[i];
+        U[i] += dt* BU[i];
+        V[i] += dt * BV[i]; 
+    }
+   
+   //Calcul avec le nombre d'itération 
+   /*
+   int iteration = 0;
 
-    //appeler les 2 fonctions femShallowAddIntegralsElements et femShallowAddIntegralsEdges
-  
-    tsunamiWriteFile(baseResultName,0,E,E,E,nElem,3); 
-    
+   while(iteration < nmax){
+        for (i=0; i < nElem*3; i++) {
+            BE[i] = 0.0;
+            BU[i] = 0.0;
+            BV[i] = 0.0; 
+        }
+        tsunamiAddIntegralsElements(nElem, elem, X,Y,E,U,V,BE,BU,BV);
+        tsunamiAddIntegralsEdges(nEdges,edges,nElem,elem,X,Y,E,U,V,BE,BU,BV);
+        InverseMatrix(BE,BU,BV,elem,nElem,X,Y);
+        //Mise à jour de E, U, V
+        for (i=0; i < nElem*3; i++) {
+            E[i] += dt * BE[i];
+            U[i] += dt* BU[i];
+            V[i] += dt * BV[i]; }
+        //On regarde s'il faut enregistrer dans un fichier ou pas
+        if( (iteration+1) % sub == 0){
+            tsunamiWriteFile(baseResultName,iteration,U,V,E,nElem,3); 
+        }
+        iteration ++;    
+   }
+   */
+   //On libère la mémoire utilisée
     free(bath);
     free(E);
     free(elem);
+    free(U);
+    free(V);
+    free(edges);
+    free(BE);
+    free(BU);
+    free(BV);
+    free(X);
+    free(Y);
+    free(x);
+    free(y);
 }
 
 
